@@ -4,12 +4,7 @@ Created on Tue Aug 17 18:46:58 2021
 
 @author: 刘强
 """
-
-'''计算排放的主体程序'''
-'''0906版本更新,增加了露天矿后的计算'''
-'''0908修改了废弃排放的计算'''
-'''0911增加了总排放计算'''
-
+'''code for emissiosn calculation'''
 import pandas as pd
 import random
 import math
@@ -22,8 +17,8 @@ pathOth=r'其他信息.xlsx'
 pathRes=r'国家和行政级别排放结果.xlsx'
 pathLocRes=r'矿井级别排放结果.xlsx'
 
-dfTot=pd.read_excel(pathTot,0,index_col='UID')#所有信息总表
-dfPro=pd.read_excel(pathPro,0,index_col='UID')#产量表
+dfTot=pd.read_excel(pathTot,0,index_col='UID')#mine-specific information
+dfPro=pd.read_excel(pathPro,0,index_col='UID')#mine-specific production
 dfPro.fillna(0,inplace=True)
 # dfRawCoal=pd.read_excel(pathOth,sheet_name='校准后原煤产量',index_col='行政区')#原煤产量表（包括露天）
 # dfPitCoal=pd.read_excel(pathOth,sheet_name='校准后露天产量',index_col='行政区')#露天产量表
@@ -32,20 +27,20 @@ dfAbanEf=pd.read_excel(pathOth,sheet_name='2011各行政区排放因子',index_c
 dfAbanNum=pd.read_excel(pathOth,sheet_name='2011前废弃',index_col='行政区')
 dfRevOri=pd.read_excel(pathOth,sheet_name='回收利用',index_col='行政区')
 
-#常量部分
+#constant value
 factor=0.67
 citys=dfTot['行政区'].unique()
 timeSeries=list(range(2011,2020))
 b=2.017#2.017
-Df=0.672#水淹0.672
-Dd=0.302#干井0.302
-aveProd=37919#unit t  2011前废弃矿井平均产能(共退出5亿吨产能)
-resEfH=3#Unit m³/t  高瓦斯和突出矿井瓦斯矿后排放因子
-resEfL=0.94#Unit m³/t  瓦斯矿井瓦斯矿后排放因子
-resPit=0.5#Unit m³/t  露天煤矿矿后排放因子
-idxList=dfTot.index.tolist()#矿井级排放数据使用index
+Df=0.672#flooding mines
+Dd=0.302#dry mines
+aveProd=37919#unit t  average production capacity of mines closed before 2011
+resEfH=3#Unit m³/t  post-mining EF of outburst and high gas content mines
+resEfL=0.94#Unit m³/t  post-mining EF of low gas content mines
+resPit=0.5#Unit m³/t  post-mining EF of open-pit mines
+idxList=dfTot.index.tolist()#the list of UID(unique identification digit)
 floodRate=0.8
-#定义获取产量
+#get annual production
 def getProdAbi(UIDList,year):
     prod=0
     for UID in UIDList:
@@ -54,37 +49,23 @@ def getProdAbi(UIDList,year):
             prod=prod+temp#t/month
     return prod
 
-### 井工部分
+### CMM calculation
 def getMineEmi(UID,year):
-    '''传入具体某个UID，在此基础上计算排放和'''
-    '''返回单位：kg'''
     ef=dfTot.loc[UID,'排放因子']#unit kg/t
     prod=dfPro.loc[UID,year]*12#unit t
     Emi=ef*prod
     return Emi
 
-### 露天部分
+### Open-pit emissions
 def getPitEmi(UID,year):
-    '''传入具体某个露天煤矿的UID，在此基础上计算排放和'''
     ef=dfTot.loc[UID,'排放因子']#unit kg/t
     prod=dfPro.loc[UID,year]*12#unit t   
     Emi=ef*prod
     return Emi
-### 废弃部分(注意用蒙特卡洛来多次模拟)
-
-#在外部蒙特卡洛
+# AMM emissions
 def getAbanEmi(UID,year,isFlood,flag):
-    '''传入UID和当前年份，计算某个煤矿当前的废弃排放'''
-    '''注意80%的水淹比例'''
-    '''每次调用前要先在外部蒙特卡洛判断是否水淹'''
-    '''0--未被水淹；1--已被水淹'''
-    '''假设没有密封这种技术使用'''
-    '''还要注意2011年以前的部分要加进来'''
-    '''针对单个煤矿的调用函数'''
-    '''废弃当年也有排放，t=0，不要忽视'''
-    '''返回单位kg'''
     abanYear=dfTot.loc[UID,'废弃时间']
-    if abanYear>2011 and not flag:#并非当年废弃，可以-1
+    if abanYear>2011 and not flag:
         iniEmi=getMineEmi(UID,abanYear-1)
     else:
         iniEmi=getMineEmi(UID,abanYear)
@@ -95,7 +76,7 @@ def getAbanEmi(UID,year,isFlood,flag):
         emi=iniEmi*math.exp(-(year-abanYear)*Df)
     return emi
 
-#2011前废弃煤矿排放
+#AMM from mines closed before 2011
 def iniAbanEmi(year,city):
     '''计算某个特定行政区，2011前废弃煤矿的排放'''
     '''针对整个行政区的调用函数'''
@@ -286,7 +267,7 @@ if __name__=='__main__':
             for UID in UIDlist:
                 emiTemp=getRevEmi(UID, year)
                 dfRev.loc[UID,year]=emiTemp/100000#单位  百吨
-    #总排放
+    #Overall emissions
     dfAll=pd.DataFrame(index=idxList,columns=timeSeries+['lng','lat','单位'])
     dfAll['lng']=dfTot['经度_百度_POI']
     dfAll['lat']=dfTot['纬度_百度_POI']
@@ -296,7 +277,7 @@ if __name__=='__main__':
             arr=np.array([dfMine.loc[UID,year],dfPit.loc[UID,year],dfAban.loc[UID,year],dfRes.loc[UID,year],-dfRev.loc[UID,year]])
             dfAll.loc[UID,year]=np.nansum(arr)
             
-    #结果写入
+    #written
     with pd.ExcelWriter(pathRes) as writer:
         dfMineRes.to_excel(writer,sheet_name='井工')
         dfPitRes.to_excel(writer,sheet_name='露天')
@@ -310,94 +291,3 @@ if __name__=='__main__':
         dfRes.to_excel(writer,sheet_name='矿后')
         dfRev.to_excel(writer,sheet_name='回收利用')
         dfAll.to_excel(writer,sheet_name='总排放')
-
-
-##随机验证废弃煤矿80%的假设
-# if __name__=='__main__':
-#     pathVarify=r'不确定性/随机验证.xlsx'
-#     dfSeriesSave=pd.read_excel(pathVarify,sheet_name='序列',index_col='UID')
-#     dfOutcomeSave=pd.read_excel(pathVarify,sheet_name='结果',index_col='序号')
-#     count=2000#蒙特卡洛次数
-#     for i in range(count):
-#         idxList=dfTot.index.tolist()
-#         #每次蒙特卡洛先生成水淹序列
-#         for j in idxList:
-#             flag=random.random()
-#             if flag>0.8:
-#                 #未被水淹
-#                 dfSeriesSave.loc[j,i]=0#表示未被水淹
-#             else:
-#                 dfSeriesSave.loc[j,i]=1#表示被水淹 
-#         #逐渐计算AMM排放
-#         for year in timeSeries:
-#             dfTemp=dfTot[(dfTot['废弃时间']<=year)&(dfTot['是否露天']==0)]#筛选废弃表
-#             UIDlist=dfTemp.index.tolist()
-#             emi=0
-#             for UID in UIDlist:
-#                 flag=0#代表不是当年废弃
-#                 if dfTot.loc[UID,'新建时间']==dfTot.loc[UID,'废弃时间']:
-#                     flag=1
-#                 emiTemp=getAbanEmi(UID, year,dfSeriesSave.loc[UID,i],flag)
-#                 emi=emi+emiTemp
-#             dfOutcomeSave.loc[i,year]=emi/1000000000#unit Tg
-#     with pd.ExcelWriter(pathVarify) as writer:
-#         dfSeriesSave.to_excel(writer,sheet_name='序列')
-#         dfOutcomeSave.to_excel(writer,sheet_name='结果')
-
-###加上2011前AMM排放
-# if __name__=='__main__':
-#     citys=list(citys)+['广东']
-#     for i in range(2011,2020):
-#         Emi=0
-#         for city in citys:
-#             Emi=Emi+iniAbanEmi(i,city)
-#         Emi=Emi/1000000000
-#         out=str(i)+'='+str(Emi)
-#         print(out)
-
-
-# ###计算锁定排放
-# if __name__=='__main__':
-#     citys=list(citys)
-#     time=list(range(2020,2061))
-#     dfLockEmi=pd.DataFrame(index=citys+['广东'],columns=time+['单位'])
-#     for year in time:
-#         #情景1  现有废弃煤矿
-#         dfTemp=dfTot[(dfTot['废弃时间']<=2019)&(dfTot['是否露天']==0)]#筛选废弃表
-#         for city in citys:
-#             dfT=dfTemp[dfTemp['行政区']==city]
-#             UIDidx=dfT.index.tolist()
-#             emi=0
-#             for UID in UIDidx:
-#                 flag=0#代表不是当年废弃
-#                 if dfTot.loc[UID,'新建时间']==dfTot.loc[UID,'废弃时间']:
-#                     flag=1
-#                 emiTemp=getAbanEmi(UID, year,dfT.loc[UID,'是否水淹'],flag)
-#                 emi=emi+emiTemp
-#             dfLockEmi.loc[city,year]=(emi+iniAbanEmi(year,city))/1000#unit 吨
-#             dfLockEmi.loc[city,'单位']='吨'
-#         dfLockEmi.loc['广东',year]=iniAbanEmi(year,'广东')/1000#unit 吨
-#         dfLockEmi.loc['广东','单位']='吨'
-#         dfLockEmi.loc['全国',year]=dfLockEmi[year].sum()/1000000#unit Mt或Tg
-#         dfLockEmi.loc['全国','单位']='Tg'
-#     dfLockEmi.to_excel('锁定排放.xlsx',sheet_name='Sheet1')
-
-# ### 每年历史排放和新增排放
-
-# if __name__=='__main__':
-#       # for year in timeSeries:
-#       #   dfTemp=dfTot[(dfTot['废弃时间']<year)&(dfTot['是否露天']==0)]#筛选废弃表_不含当年
-#       #   Emi=0
-#       #   for UID in dfTemp.index:
-#       #       emiTemp=getAbanEmi(UID, year,dfTemp.loc[UID,'是否水淹'],0)
-#       #       Emi=Emi+emiTemp
-#       #   Emi=Emi/1000000000#Tg
-#       #   for city in list(citys)+['广东']:
-#       #       Emi=Emi+iniAbanEmi(year,city)/1000000000#Tg
-#     #2011前废弃煤矿的排放
-#     for year in timeSeries:
-#         Emi=0
-#         for city in list(citys)+['广东']:
-#             Emi=Emi+iniAbanEmi(year,city)/1000000000#Tg
-#         print(Emi)
-        
